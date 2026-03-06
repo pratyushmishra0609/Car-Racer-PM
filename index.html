@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html>
+<head><link rel="manifest" href="manifest.json">
+
+    <title>🚗 PRATYUSH MISHRA Car Racer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            background: linear-gradient(180deg, #87CEEB 0%, #90EE90 100%);
+            color: white; font-family: Arial Black; overflow: hidden; 
+            height: 100vh; text-align: center; user-select: none;
+        }
+        canvas { border: 4px solid gold; max-width: 100%; max-height: 100vh; }
+        #controls { 
+            position: absolute; bottom: 20px; width: 100%; 
+            display: flex; justify-content: space-between; padding: 0 30px;
+        }
+        .btn { 
+            width: 80px; height: 80px; border-radius: 50%; 
+            background: rgba(255,255,255,0.3); border: 4px solid #FFD700;
+            font-size: 24px; color: white; cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <div class="btn" id="leftBtn">⬅️</div>
+        <div class="btn" id="rightBtn">➡️</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive
+        function resize() {
+            const size = Math.min(window.innerWidth, window.innerHeight * 0.8);
+            canvas.width = size;
+            canvas.height = size * 1.2;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        // Game state
+        let gameState = 'menu'; // menu, playing, gameOver
+        let score = 0, gameSpeed = 3;
+        let player = { x: 180, y: 450, w: 45, h: 75 };
+        let enemies = [], buildingsLeft = [], buildingsRight = [], roadLine = 0;
+        let keys = {}, touchLeft = false, touchRight = false;
+
+        // Sound
+        function beep(freq=400, duration=0.1) {
+            try {
+                const audio = new (window.AudioContext||window.webkitAudioContext)();
+                const osc = audio.createOscillator(), gain = audio.createGain();
+                osc.connect(gain); gain.connect(audio.destination);
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.3, audio.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audio.currentTime + duration);
+                osc.start(); osc.stop(audio.currentTime + duration);
+            } catch(e) {}
+        }
+
+        // Controls
+        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+        document.getElementById('leftBtn').addEventListener('touchstart', () => touchLeft = true);
+        document.getElementById('leftBtn').addEventListener('touchend', () => touchLeft = false);
+        document.getElementById('rightBtn').addEventListener('touchstart', () => touchRight = true);
+        document.getElementById('rightBtn').addEventListener('touchend', () => touchRight = false);
+
+        // Swipe
+        let touchStartX = 0;
+        canvas.addEventListener('touchstart', e => touchStartX = e.touches[0].clientX);
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            const touchX = e.touches[0].clientX;
+            if (touchX - touchStartX > 30) touchRight = true;
+            else if (touchStartX - touchX > 30) touchLeft = true;
+        });
+        canvas.addEventListener('touchend', () => touchLeft = touchRight = false);
+
+        function spawnEnemy() {
+            enemies.push({
+                x: [80, 170, 260][Math.floor(Math.random()*3)],
+                y: -80, w: 45, h: 75,
+                speed: gameSpeed + Math.random()*3
+            });
+        }
+
+        function spawnBuildingLeft() {
+            buildingsLeft.push({
+                x: 10,
+                y: -120,
+                w: 50 + Math.random()*30,
+                h: 100 + Math.random()*100,
+                color: `hsl(${180+Math.random()*40}, 50%, ${30+Math.random()*20}%)`
+            });
+        }
+
+        function spawnBuildingRight() {
+            buildingsRight.push({
+                x: canvas.width - 80,
+                y: -140,
+                w: 50 + Math.random()*30,
+                h: 100 + Math.random()*100,
+                color: `hsl(${200+Math.random()*40}, 50%, ${30+Math.random()*20}%)`
+            });
+        }
+
+        function collision(a, b) {
+            return a.x < b.x + b.w && a.x + a.w > b.x &&
+                   a.y < b.y + b.h && a.y + a.h > b.y;
+        }
+
+        function update() {
+            if (gameState !== 'playing') return;
+
+            // Player movement
+            let moveX = 0;
+            if (keys['arrowleft'] || keys['a'] || touchLeft) moveX -= 8;
+            if (keys['arrowright'] || keys['d'] || touchRight) moveX += 8;
+            player.x = Math.max(40, Math.min(canvas.width - 85, player.x + moveX));
+
+            // Road scroll
+            roadLine += gameSpeed;
+            if (roadLine > 50) roadLine = 0;
+
+            // Enemies
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                enemies[i].y += enemies[i].speed;
+                if (collision(player, enemies[i])) {
+                    gameState = 'gameOver';
+                    beep(150, 0.4);
+                    return;
+                }
+                if (enemies[i].y > canvas.height) {
+                    enemies.splice(i, 1);
+                    score += 15;
+                    beep(800, 0.1);
+                }
+            }
+
+            // Buildings LEFT side only
+            buildingsLeft.forEach((b, i) => {
+                b.y += gameSpeed * 0.5;
+                if (b.y > canvas.height) buildingsLeft.splice(i, 1);
+            });
+
+            // Buildings RIGHT side only
+            buildingsRight.forEach((b, i) => {
+                b.y += gameSpeed * 0.5;
+                if (b.y > canvas.height) buildingsRight.splice(i, 1);
+            });
+
+            gameSpeed += 0.008;
+        }
+
+        function drawMenu() {
+            // Background
+            const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            sky.addColorStop(0, '#87CEEB'); sky.addColorStop(1, '#98FB98');
+            ctx.fillStyle = sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Grass
+            ctx.fillStyle = '#228B22';
+            ctx.fillRect(0, canvas.height*0.3, 70, canvas.height);
+            ctx.fillRect(canvas.width-70, canvas.height*0.3, 70, canvas.height);
+
+            // Road
+            ctx.fillStyle = '#555';
+            ctx.fillRect(70, 0, canvas.width-140, canvas.height);
+
+            // Title
+            ctx.fillStyle = '#FFD700';
+            ctx.font = `bold ${canvas.width/12}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 10;
+            ctx.fillText('🚗 CAR RACER 🚗', canvas.width/2, canvas.height*0.25);
+            ctx.shadowBlur = 0;
+
+            // Credits
+            ctx.fillStyle = '#FFD700';
+            ctx.font = `bold ${canvas.width/20}px Arial`;
+            ctx.fillText('👑 PRATYUSH MISHRA 👑', canvas.width/2, canvas.height*0.4);
+
+            // Instructions
+            ctx.fillStyle = '#FFF';
+            ctx.font = `${canvas.width/25}px Arial`;
+            ctx.fillText('⬅️ ➡️ SWIPE / BUTTONS ➡️ ⬅️', canvas.width/2, canvas.height*0.55);
+            ctx.fillText('🚗 DODGE RED CARS 🚗', canvas.width/2, canvas.height*0.62);
+
+            // Start button
+            ctx.fillStyle = 'rgba(255,215,0,0.9)';
+            ctx.fillRect(canvas.width*0.3, canvas.height*0.75, canvas.width*0.4, canvas.height*0.1);
+            ctx.fillStyle = '#000';
+            ctx.font = `bold ${canvas.width/25}px Arial`;
+            ctx.fillText('START RACE', canvas.width/2, canvas.height*0.83);
+        }
+
+        function drawGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Sky
+            const sky = ctx.createLinearGradient(0, 0, 0, canvas.height*0.3);
+            sky.addColorStop(0, '#87CEEB'); sky.addColorStop(1, '#98FB98');
+            ctx.fillStyle = sky; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // LEFT Grass + Buildings
+            ctx.fillStyle = '#228B22';
+            ctx.fillRect(0, canvas.height*0.25, 70, canvas.height);
+            buildingsLeft.forEach(b => {
+                ctx.fillStyle = b.color;
+                ctx.fillRect(b.x, b.y, b.w, b.h);
+                ctx.fillStyle = '#FFF';
+                for (let j = 0; j < 3; j++) {
+                    ctx.fillRect(b.x+5, b.y+15+j*30, 12, 12);
+                }
+            });
+
+            // Road
+            ctx.fillStyle = '#555'; 
+            ctx.fillRect(70, 0, canvas.width-140, canvas.height);
+            ctx.fillStyle = '#777';
+            ctx.fillRect(80, 0, canvas.width-160, canvas.height);
+
+            // Road lines
+            ctx.fillStyle = '#FFFF00';
+            for (let i = 0; i < 25; i++) {
+                const y = ((i * 60 + roadLine) % 120) + canvas.height*0.25;
+                ctx.fillRect(canvas.width/2 - 20, y, 40, 25);
+            }
+
+            // RIGHT Grass + Buildings
+            ctx.fillStyle = '#228B22';
+            ctx.fillRect(canvas.width-70, canvas.height*0.25, 70, canvas.height);
+            buildingsRight.forEach(b => {
+                ctx.fillStyle = b.color;
+                ctx.fillRect(b.x, b.y, b.w, b.h);
+                ctx.fillStyle = '#FFF';
+                for (let j = 0; j < 3; j++) {
+                    ctx.fillRect(b.x+8, b.y+15+j*30, 12, 12);
+                }
+            });
+
+            // Player car
+            ctx.fillStyle = '#00F8FF';
+            ctx.shadowColor = 'rgba(0,255,255,0.5)'; ctx.shadowBlur = 15;
+            ctx.fillRect(player.x, player.y, player.w, player.h);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#FFF';
+            ctx.fillRect(player.x+8, player.y+15, 30, 20);
+
+            // Enemy cars
+            ctx.fillStyle = '#F44';
+            enemies.forEach(e => {
+                ctx.fillRect(e.x, e.y, e.w, e.h);
+                ctx.fillStyle = '#FFF';
+                ctx.fillRect(e.x+8, e.y+15, 30, 20);
+                ctx.fillStyle = '#F44';
+            });
+
+            // UI
+            ctx.fillStyle = '#FFD700';
+            ctx.font = `${canvas.width/20}px Arial`;
+            ctx.textAlign = 'left';
+            ctx.fillText(`Score: ${Math.floor(score)}`, 80, 40);
+            ctx.fillText(`Speed: ${Math.floor(gameSpeed)}`, 80, 70);
+        }
+
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0,0,0,0.9)';
+            ctx.fillRect(0, canvas.height*0.3, canvas.width, canvas.height*0.4);
+            
+            ctx.fillStyle = '#FFD700';
+            ctx.font = `bold ${canvas.width/15}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', canvas.width/2, canvas.height*0.45);
+            
+            ctx.fillStyle = '#FFF';
+            ctx.font = `${canvas.width/20}px Arial`;
+            ctx.fillText(`Final Score: ${Math.floor(score)}`, canvas.width/2, canvas.height*0.52);
+            ctx.fillText('Tap to Play Again', canvas.width/2, canvas.height*0.6);
+        }
+
+        // Click/Tap to start/restart
+        canvas.addEventListener('click', () => {
+            if (gameState === 'menu') {
+                gameState = 'playing';
+                player.x = canvas.width/2 - 22.5;
+                score = 0;
+                gameSpeed = 3;
+                enemies = [];
+                buildingsLeft = [];
+                buildingsRight = [];
+                beep(800, 0.2);
+            } else if (gameState === 'gameOver') {
+                gameState = 'menu';
+            }
+        });
+
+        function update() {
+            if (gameState !== 'playing') return;
+            // ... (same update logic as before)
+            let moveX = 0;
+            if (keys['arrowleft'] || keys['a'] || touchLeft) moveX -= 8;
+            if (keys['arrowright'] || keys['d'] || touchRight) moveX += 8;
+            player.x = Math.max(40, Math.min(canvas.width - 85, player.x + moveX));
+
+            roadLine += gameSpeed;
+            if (roadLine > 50) roadLine = 0;
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                enemies[i].y += enemies[i].speed;
+                if (collision(player, enemies[i])) {
+                    gameState = 'gameOver';
+                    beep(150, 0.4);
+                    return;
+                }
+                if (enemies[i].y > canvas.height) {
+                    enemies.splice(i, 1);
+                    score += 15;
+                    beep(800, 0.1);
+                }
+            }
+
+            buildingsLeft.forEach((b, i) => {
+                b.y += gameSpeed * 0.5;
+                if (b.y > canvas.height) buildingsLeft.splice(i, 1);
+            });
+            buildingsRight.forEach((b, i) => {
+                b.y += gameSpeed * 0.5;
+                if (b.y > canvas.height) buildingsRight.splice(i, 1);
+            });
+
+            gameSpeed += 0.008;
+        }
+
+        function draw() {
+            if (gameState === 'menu') {
+                drawMenu();
+            } else if (gameState === 'playing') {
+                drawGame();
+            } else {
+                drawGame();
+                drawGameOver();
+            }
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // Spawning
+        setInterval(() => {
+            if (gameState === 'playing') {
+                spawnEnemy();
+                if (Math.random() < 0.5) spawnBuildingLeft();
+                if (Math.random() < 0.5) spawnBuildingRight();
+            }
+        }, 900);
+
+        loop();
+    </script>
+</body>
+</html>
